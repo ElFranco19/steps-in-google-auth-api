@@ -183,7 +183,12 @@ This fresh start ensures you properly configure the authentication emulator
 To Generate a Test Token:
 Once the emulator is running, in a NEW terminal window run:
 
-curl -X POST "http://localhost:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=any_key_works" -H "Content-Type: application/json" -d "{\"email\":\"test@example.com\",\"password\":\"password\", \"returnSecureToken\":true}"
+Here's the complete CMD-ready solution to create a test user and get a valid ID token from the Firebase Emulator:
+
+1. First, Create the Test User:
+curl -X POST "http://localhost:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=any_key_works" -H "Content-Type: application/json" -d "{\"email\":\"test@example.com\",\"password\":\"password\",\"returnSecureToken\":true}"
+2. Then Sign In to Get the Token:
+curl -X POST "http://localhost:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=any_key_works" -H "Content-Type: application/json" -d "{\"email\":\"test@example.com\",\"password\":\"password\",\"returnSecureToken\":true}"
 
 Copy the idToken from the response to use in your Laravel API tests.
 Paste the idToken into your API request (Insomnia/Postman) to test:
