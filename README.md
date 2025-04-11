@@ -1,145 +1,214 @@
-# steps-in-google-auth-api
+---------------Step 1: Install Laravel Sanctum & Firebase JWT
+We need two key packages:
 
-You're welcome! Let's begin with the **first step**: **Setting Up Firebase**.
+Laravel Sanctum: For generating secure API tokens (JWT-like).
+Firebase JWT: To verify Google’s ID tokens.
 
-### **Step 1: Set Up Firebase**
+1. Run these commands in your terminal:
+(Make sure you’re in your project folder: google-auth-api)
 
-1. **Create a Firebase Project:**
+composer require laravel/sanctum firebase/php-jwt
+php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider"
+php artisan migrate
 
-   - Go to the [Firebase Console](https://console.firebase.google.com/).
-   - Click on **"Add Project"**.
-   - Enter a name for your project (e.g., **google-auth-api**) and click **"Continue"**.
-   - You can skip the Google Analytics setup if you don't need it for now, then click **"Create Project"**.
+What this does:
+laravel/sanctum: Adds token-based authentication to Laravel.
+firebase/php-jwt: Validates Google’s ID tokens.
+migrate: Creates database tables for users and tokens.
 
-2. **Enable Google Sign-In for Firebase Authentication:**
+2. Verify Sanctum is installed:
+Check config/sanctum.php exists.
 
-   - In the Firebase Console, go to your newly created project.
-   - In the left-hand menu, click on **Authentication**.
-   - Under the **Sign-in method** tab, you'll see a list of authentication providers. Click **Google** and toggle it to **Enable**.
-   - Click **Save**.
+-------------------Step 2: Configure Sanctum
+Sanctum needs slight tweaking to work with APIs.
 
-3. **Generate Firebase Admin SDK Private Key:**
+1. Update config/sanctum.php:
+Change the stateful domains (for web/mobile apps):
 
-   To interact with Firebase from the backend, you'll need a **private key** for the Firebase Admin SDK.
+'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', 'localhost,127.0.0.1')),
 
-   - In the Firebase Console, click on the **gear icon** in the top left and go to **Project Settings**.
-   - In the **Service accounts** tab, click on **Generate new private key**. This will download a JSON file containing the credentials needed to authenticate with Firebase.
+2. Add to .env:
+SANCTUM_STATEFUL_DOMAINS=localhost,127.0.0.1
+SESSION_DOMAIN=localhost
 
-4. **Store the Firebase Admin SDK Key in Your Laravel Project:**
+(This allows tokens to work on your local dev server.)
 
-   - Move the downloaded JSON file to a safe location in your Laravel project. A good place to store it is in the `storage` folder.
-   - You can create a subfolder like `storage/app/firebase/` and place the file there. Let’s assume the file is named `serviceAccountKey.json`.
+---------------------------Step 3: Create the Google Auth Endpoint
+Now, let’s build the /auth/google API.
 
-Once you’ve completed these steps, let me know, and we’ll move on to the next part of the process!
+1. Generate a Controller:
+php artisan make:controller Auth/GoogleAuthController
 
-______________________________________________________________________________________________________________________________________________________________________________
-
-
-Great job! Now that Firebase is set up, let's move on to **Step 2**: **Set Up Firebase in Your Laravel Project**.
-
-### **Step 2: Set Up Firebase in Laravel**
-
-#### 1. **Install the Firebase SDK for PHP**
-
-We need to install the **kreait/firebase-php** package to interact with Firebase in our Laravel backend.
-
-- In your terminal, run the following command inside your Laravel project folder:
-
-```bash
-composer require kreait/firebase-php
-```
-
-This will install the necessary package for Firebase integration.
-
-#### 2. **Create Firebase Configuration File**
-
-We need to create a configuration file in Laravel to store the path to the Firebase Admin SDK key and any necessary configurations.
-
-- In your Laravel project, create a new configuration file. Run this command in the terminal:
-
-```bash
-touch config/firebase.php
-```
-
-- Open the `config/firebase.php` file and add the following code to load your Firebase credentials:
-
-```php
+2. Paste this code into app/Http/Controllers/Auth/GoogleAuthController.php:
 <?php
 
-return [
-    'credentials' => storage_path('app/firebase/serviceAccountKey.json'), // Path to your service account key file
-];
-```
+namespace App\Http\Controllers\Auth;
 
-Make sure the path points to where you stored the **`serviceAccountKey.json`** file inside the `storage` folder.
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use App\Models\User;
+use Firebase\JWT\JWT;
+use Firebase\JWT\Key;
+use Illuminate\Support\Str;
 
-#### 3. **Create Firebase Authentication Service**
-
-Now let’s create a service to interact with Firebase Authentication. This will allow us to verify the Google ID Token sent by the mobile client.
-
-- Run the following command to create a service class:
-
-```bash
-php artisan make:service FirebaseAuthService
-```
-
-- Open the newly created file at `app/Services/FirebaseAuthService.php` and add the following code:
-
-```php
-namespace App\Services;
-
-use Kreait\Firebase\Factory;
-use Kreait\Firebase\Auth;
-
-class FirebaseAuthService
+class GoogleAuthController extends Controller
 {
-    protected $auth;
-
-    public function __construct()
+    public function handleGoogleAuth(Request $request)
     {
-        $this->auth = (new Factory)
-                        ->withServiceAccount(config('firebase.credentials'))  // Load credentials from config
-                        ->createAuth();
+        // 1. Validate the Google ID token exists
+        $request->validate([
+            'google_id_token' => 'required|string',
+        ]);
+
+        // 2. Verify the Google token
+        try {
+            $googleUser = $this->verifyGoogleToken($request->google_id_token);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Invalid Google token'], 401);
+        }
+
+        // 3. Find or create the user
+        $user = User::firstOrCreate(
+            ['email' => $googleUser->email],
+            [
+                'name' => $googleUser->name,
+                'password' => Str::random(32), // Dummy password (not used)
+                'google_id' => $googleUser->sub,
+            ]
+        );
+
+        // 4. Generate tokens
+        $accessToken = $user->createToken('google-access-token')->plainTextToken;
+        $refreshToken = $user->createToken('google-refresh-token')->plainTextToken;
+
+        // 5. Return response
+        return response()->json([
+            'status' => $user->wasRecentlyCreated ? 'new_user' : 'existing_user',
+            'message' => $user->wasRecentlyCreated 
+                ? 'Google verified. Complete registration.' 
+                : 'Login successful',
+            'access_token' => $accessToken,
+            'refresh_token' => $refreshToken,
+        ]);
     }
 
-    public function verifyGoogleIdToken($idToken)
+    private function verifyGoogleToken($idToken)
     {
-        try {
-            $verifiedIdToken = $this->auth->verifyIdToken($idToken);
-            return $verifiedIdToken;
-        } catch (\Exception $e) {
-            throw new \Exception('Invalid ID token: ' . $e->getMessage());
-        }
+        $client = new \Google_Client(['client_id' => env('GOOGLE_CLIENT_ID')]);
+        return $client->verifyIdToken($idToken);
     }
 }
-```
+   
+3. Add the route in routes/api.php:
+Since Laravel 11 streamlined the structure, here’s how to proceed:
 
-This service will handle verifying the Google ID Token using Firebase.
+3.1 Create routes/api.php Manually
+Navigate to your project’s routes/ folder. Create a new file named api.php. Paste this boilerplate code:
 
-#### 4. **Test the Firebase Integration**
+<?php
 
-At this point, you’ve set up Firebase integration in your Laravel project. The next step will be to create the route and controller for handling the `/auth/google` endpoint, but before that, let’s confirm that everything is working.
+use Illuminate\Support\Facades\Route;
 
-To verify, try calling the `verifyGoogleIdToken()` method from FirebaseAuthService and pass a test Google ID Token (which we will obtain from the frontend later).
+Route::prefix('api')->group(function () {
+    // Your API routes will go here
+});
 
-You can test this service in your **Tinker** shell by running:
+3.2 Register the API Routes
+Open bootstrap/app.php.
 
-```bash
-php artisan tinker
-```
+Add this line before the ->withRouting() call:
 
-Then, you can try verifying a token:
+->withRouting(
+    api: __DIR__.'/../routes/api.php', // Add this line
+    web: __DIR__.'/../routes/web.php'
+)
 
-```php
-$firebaseAuthService = new \App\Services\FirebaseAuthService();
-$verifiedToken = $firebaseAuthService->verifyGoogleIdToken('your-google-id-token-here');
-```
+3.3 Add Your Google Auth Route. Now edit routes/api.php:
 
-If it returns a valid response, you’ve successfully integrated Firebase with your Laravel backend!
+use App\Http\Controllers\Auth\GoogleAuthController;
 
----
+Route::post('/auth/google', [GoogleAuthController::class, 'handleGoogleAuth']);
 
-Once you’ve completed these steps, let me know and we’ll move on to creating the `/auth/google` route and handling the user logic (new/existing users).
+-------------------Step 4: Test Your API
+1. Start the Laravel server:
+php artisan serve
+2. Test with Postman/Insomnia:
+Method: POST
+URL: http://localhost:8000/api/auth/google
+Body (JSON):
 
-_____________________________________________________________________________________________________________________________________________________________________________
+json
+{
+  "google_id_token": "paste-a-valid-google-id-token-here"
+}
+(To get a test Google ID token, Follow this instruction)
+--->
+1. First, log in to Firebase (if you haven't):
+Run this in any terminal:
 
+firebase login
+
+➔ Follow the browser prompt to log in with Google.
+2. Create a Temporary Firebase Project (Just for Testing Tokens)
+
+emp-firebase-test  # Create a temp folder (anywhere)
+cd temp-firebase-test    # Go into it
+firebase init emulators   # Initialize Firebase here
+
+When you see this prompt:
+
+? Which Firebase emulators do you want to set up? Press Space to select emulators, then Enter to confirm your choices.
+Press SPACEBAR to select "Authentication" (you should see a ◉ appear next to it)
+Then press ENTER
+
+For the remaining questions:
+
+"Would you like to download the emulators now?" → Type N for No
+"Which port do you want to use?" → Just press ENTER for default (9099)
+
+Now start the emulator:
+
+firebase emulators:start
+
+What You Should See:
+
+i  emulators: Starting emulators: auth
+✔  auth: Authentication emulator ready at http://localhost:9099
+
+Why This Works:
+You must explicitly select at least one emulator (in this case, Authentication)
+The previous attempts didn't actually enable any emulators
+This fresh start ensures you properly configure the authentication emulator
+
+To Generate a Test Token:
+Once the emulator is running, in a NEW terminal window run:
+
+curl -X POST "http://localhost:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=any_key_works" -H "Content-Type: application/json" -d "{\"email\":\"test@example.com\",\"password\":\"password\", \"returnSecureToken\":true}"
+
+Copy the idToken from the response to use in your Laravel API tests.
+Paste the idToken into your API request (Insomnia/Postman) to test:
+
+{
+  "google_id_token": "PASTE_THE_TOKEN_HERE"
+}
+
+
+Expected Responses:
+New User:
+
+json
+{
+  "status": "new_user",
+  "message": "Google verified. Complete registration.",
+  "access_token": "xxx",
+  "refresh_token": "yyy"
+}
+Existing User:
+
+json
+{
+  "status": "existing_user",
+  "message": "Login successful",
+  "access_token": "xxx",
+  "refresh_token": "yyy"
+}
