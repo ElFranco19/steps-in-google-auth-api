@@ -142,53 +142,122 @@ json
   "google_id_token": "paste-a-valid-google-id-token-here"
 }
 (To get a test Google ID token, Follow this instruction)
---->
-1. First, log in to Firebase (if you haven't):
-Run this in any terminal:
+----->
+Create an HTML file with this code:
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Firebase Google Sign-In</title>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+</head>
+<body>
+  <h1>Get Google ID Token</h1>
+  <button id="signInButton">Sign in with Google</button>
+  <div id="tokenInfo" style="margin-top: 20px; word-break: break-all;"></div>
 
-firebase login
+  <script>
+    // Your Firebase config
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
 
-➔ Follow the browser prompt to log in with Google.
-2. Create a Temporary Firebase Project (Just for Testing Tokens)
+    // Initialize Firebase
+    const app = firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
 
-emp-firebase-test  # Create a temp folder (anywhere)
-cd temp-firebase-test    # Go into it
-firebase init emulators   # Initialize Firebase here
+    // Google Sign-In
+    document.getElementById('signInButton').addEventListener('click', () => {
+      const provider = new firebase.auth.GoogleAuthProvider();
+      auth.signInWithPopup(provider)
+        .then((result) => {
+          // Get the ID token
+          return result.user.getIdToken();
+        })
+        .then((idToken) => {
+          console.log("ID Token:", idToken);
+          
+          // Display the token
+          document.getElementById('tokenInfo').innerHTML = `
+            <h3>ID Token:</h3>
+            <textarea rows="10" cols="80">${idToken}</textarea>
+            <h3>Decoded:</h3>
+            <pre>${JSON.stringify(parseJwt(idToken), null, 2)}</pre>
+          `;
+        })
+        .catch((error) => {
+          console.error("Error:", error);
+        });
+    });
 
-When you see this prompt:
+    function parseJwt(token) {
+      const base64Url = token.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      return JSON.parse(atob(base64));
+    }
+  </script>
+</body>
+</html>
 
-? Which Firebase emulators do you want to set up? Press Space to select emulators, then Enter to confirm your choices.
-Press SPACEBAR to select "Authentication" (you should see a ◉ appear next to it)
-Then press ENTER
+How to Get Firebase Configuration for Your Web App
+With Firebase Google Sign-In, you'll need to get your Firebase configuration object. Here's how to obtain it:
 
-For the remaining questions:
+Step-by-Step Guide
+Go to the Firebase Console:
+Visit https://console.firebase.google.com/
 
-"Would you like to download the emulators now?" → Type N for No
-"Which port do you want to use?" → Just press ENTER for default (9099)
+Select your project or create a new one
+Add a web app to your project:
+Click on the "</>" (web) icon in the project overview page
+Register your app by giving it a nickname (e.g., "Test Auth App")
 
-Now start the emulator:
+Click "Register app"
 
-firebase emulators:start
+Get your Firebase config:
+You'll see a code snippet with your configuration that looks like this:
 
-What You Should See:
+javascript:
+const firebaseConfig = {
+  apiKey: "AIzaSyABCD...",
+  authDomain: "your-project-id.firebaseapp.com",
+  projectId: "your-project-id",
+  storageBucket: "your-project-id.appspot.com",
+  messagingSenderId: "1234567890",
+  appId: "1:1234567890:web:abc123def456"
+};
+Copy this entire configuration object
 
-i  emulators: Starting emulators: auth
-✔  auth: Authentication emulator ready at http://localhost:9099
+Enable Google Authentication:
+In the left sidebar, go to "Authentication" → "Sign-in method"
+Click on "Google" and toggle the enable switch
+Select a project support email
+Click "Save"
 
-Why This Works:
-You must explicitly select at least one emulator (in this case, Authentication)
-The previous attempts didn't actually enable any emulators
-This fresh start ensures you properly configure the authentication emulator
+Optional: Add authorized domains:
+In the Authentication settings, go to "Settings"
+Under "Authorized domains", add:
+localhost
+Any other domains you'll be testing from
 
-To Generate a Test Token:
-Once the emulator is running, in a NEW terminal window run:
+Important Notes
+The apiKey is not a secret - it's safe to include in your client-side code as it's used to identify your Firebase project.
 
-Here's the complete CMD-ready solution to create a test user and get a valid ID token from the Firebase Emulator:
+For local testing:
+Make sure localhost is in your authorized domains
+You can serve your HTML file using a simple server:
 
-1. First, Create the Test User:
-curl -X POST "http://localhost:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=any_key_works" -H "Content-Type: application/json" -d "{\"email\":\"test@example.com\",\"password\":\"password\",\"returnSecureToken\":true}"
-2. Then Sign In to Get the Token:
-curl -X POST "http://localhost:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=any_key_works" -H "Content-Type: application/json" -d "{\"email\":\"test@example.com\",\"password\":\"password\",\"returnSecureToken\":true}"
+terminal:
+python3 -m http.server 8000
+Then access it at http://localhost:8000
+
+If you're deploying to a real domain, add that domain to your authorized domains list in Firebase console.
+The configuration values you get are specific to your Firebase project - don't share them publicly if your project contains sensitive data.
+<------
 
 Copy the idToken from the response to use in your Laravel API tests.
 Paste the idToken into your API request (Insomnia/Postman) to test:
