@@ -286,3 +286,131 @@ json
   "access_token": "xxx",
   "refresh_token": "yyy"
 }
+
+-----------------------Step 5: Implement Security Measures (Laravel 11 Specific)
+Since Laravel 11 has a streamlined structure, we'll configure security settings differently than older versions. Here's how to add Rate Limiting, CORS, and Input Sanitization properly.
+
+1. Rate Limiting (Prevent API Abuse)
+Laravel 11 uses a simpler middleware setup in bootstrap/app.php.
+
+A. Configure Rate Limiting Globally
+Open bootstrap/app.php and modify the withMiddleware() section:
+
+php
+->withMiddleware(function (Middleware $middleware) {
+    $middleware->api([
+        \Illuminate\Routing\Middleware\ThrottleRequests::class . ':60,1', // 60 requests per minute
+    ]);
+
+✅ Test it:
+
+Send >60 requests in 1 minute to /api/auth/google.
+Expected response: 429 Too Many Requests.
+
+2. CORS (Allow Frontend to Access API)
+Laravel 11 removes the default CORS package, so we'll use a middleware.
+
+A. Create a Custom CORS Middleware
+Generate middleware:
+
+bash:
+php artisan make:middleware Cors
+
+Edit app/Http/Middleware/Cors.php:
+public function handle($request, Closure $next)
+{
+    return $next($request)
+        ->header('Access-Control-Allow-Origin', '*') // Or your frontend URL (e.g., 'http://localhost:3000')
+        ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
+
+Register it in bootstrap/app.php:
+php
+->withMiddleware(function (Middleware $middleware) {
+    $middleware->append(\App\Http\Middleware\Cors::class);
+})
+
+✅ Test it:
+Call the API from a frontend app (e.g., React/Vue).
+Check browser’s Network tab for CORS headers.
+
+3. Input Sanitization (Prevent Malicious Tokens)
+We’ll enhance validation in GoogleAuthController.php.
+
+A. Strict Google ID Token Validation
+Update the handleGoogleAuth method:
+
+$request->validate([
+    'google_id_token' => [
+        'required',
+        'string',
+        function ($attribute, $value, $fail) {
+            if (!preg_match('/^[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+$/', $value)) {
+                $fail('The ' . $attribute . ' is invalid.');
+            }
+        },
+    ],
+]);
+
+B. Sanitize User Data (Optional)
+If storing user data, add to User::firstOrCreate():
+
+php
+$user = User::firstOrCreate(
+    ['email' => filter_var($claims['email'], FILTER_SANITIZE_EMAIL)],
+    [
+        'name' => htmlspecialchars($claims['name'] ?? 'Google User'),
+        'password' => Str::random(32),
+        'google_id' => $claims['sub'],
+    ]
+);
+
+✅ Test it:
+
+Send a malformed token (e.g., "google_id_token": "<script>alert('xss')</script>").
+Expected response: 422 Unprocessable Entity with an error.
+
+4. Additional Security (Optional but Recommended)
+A. HTTPS Enforcement (For Production)
+
+In bootstrap/app.php:
+php
+->withMiddleware(function (Middleware $middleware) {
+    $middleware->web(\Illuminate\Http\Middleware\TrustProxies::class);
+    $middleware->web(\Illuminate\Http\Middleware\HandleCors::class);
+    $middleware->web(\App\Http\Middleware\ForceHttps::class); // 👈 Add this
+})
+Create ForceHttps middleware:
+
+bash:
+php artisan make:middleware ForceHttps
+
+Then edit it:
+
+php
+public function handle($request, Closure $next)
+{
+    if (!$request->secure() && app()->isProduction()) {
+        return redirect()->secure($request->getRequestUri());
+    }
+    return $next($request);
+}
+
+B. Disable Token Database Exposure
+
+In app/Models/User.php:
+php
+protected $hidden = [
+    'password',
+    'remember_token',
+    'google_id', // 👈 Hide sensitive fields
+];
+
+✅ Final Verification
+Rate Limiting:
+Send 60+ requests in 1 minute → Should block with 429.
+CORS:
+Call API from a frontend → No CORS errors.
+Input Sanitization:
+Send invalid token → Returns 422 validation error.
