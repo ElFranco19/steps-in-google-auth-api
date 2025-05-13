@@ -44,11 +44,10 @@ php artisan make:controller Auth/GoogleAuthController
 
 namespace App\Http\Controllers\Auth;
 
+use Google\Client as Google_Client;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\User;
-use Firebase\JWT\JWT;
-use Firebase\JWT\Key;
 use Illuminate\Support\Str;
 
 class GoogleAuthController extends Controller
@@ -57,23 +56,47 @@ class GoogleAuthController extends Controller
     {
         // 1. Validate the Google ID token exists
         $request->validate([
-            'google_id_token' => 'required|string',
+            'google_id_token' => [
+                'required',
+                'string',
+                function ($attribute, $value, $fail) {
+                    if (!preg_match('/^[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+$/', $value)) {
+                        $fail('The ' . $attribute . ' is invalid.');
+                    }
+                },
+            ],
         ]);
 
         // 2. Verify the Google token
         try {
             $googleUser = $this->verifyGoogleToken($request->google_id_token);
+            
+            if ($googleUser === false) {
+                return response()->json(['error' => 'Google token verification failed'], 401);
+            }
+
         } catch (\Exception $e) {
-            return response()->json(['error' => 'Invalid Google token'], 401);
+            return response()->json([
+                'error' => 'Google authentication failed',
+                'details' => $e->getMessage() // Only include in development
+            ], 401);
         }
+
+        // Convert to array first
+        $claims = $googleUser->claims()->all();
+        // ADD DEBUG LOG HERE TEMPORARY
+        \Log::debug('Token verified successfully', [
+            'email' => $claims['email'],  // Use $claims instead of $googleUser
+            'claims' => $claims
+        ]);
 
         // 3. Find or create the user
         $user = User::firstOrCreate(
-            ['email' => $googleUser->email],
+            ['email' => filter_var($claims['email'], FILTER_SANITIZE_EMAIL)],
             [
-                'name' => $googleUser->name,
-                'password' => Str::random(32), // Dummy password (not used)
-                'google_id' => $googleUser->sub,
+                'name' => htmlspecialchars($claims['name'] ?? 'Google User'),
+                'password' => Str::random(32),
+                'google_id' => $claims['sub'],
             ]
         );
 
@@ -92,15 +115,30 @@ class GoogleAuthController extends Controller
         ]);
     }
 
+    
     private function verifyGoogleToken($idToken)
-    {
-        $client = new \Google_Client(['client_id' => env('GOOGLE_CLIENT_ID')]);
-        return $client->verifyIdToken($idToken);
-    }
+        {
+            // Use Laravel's storage_path() helper
+            $serviceAccountPath = storage_path('app/firebase-credentials.json');
+            
+            if (!file_exists($serviceAccountPath)) {
+                throw new \Exception("Firebase credentials file not found at: ".$serviceAccountPath);
+            }
+
+            $factory = (new \Kreait\Firebase\Factory)
+                ->withServiceAccount($serviceAccountPath);
+            
+            try {
+                return $factory->createAuth()->verifyIdToken($idToken);
+            } catch (\Exception $e) {
+                \Log::error('Token verification failed: '.$e->getMessage());
+                return false;
+            }
+        }
 }
-   
+
 3. Add the route in routes/api.php:
-Since Laravel 11 streamlined the structure, here’s how to proceed:
+Since Laravel 11 streamlined the structure, here’s how to proceed:    
 
 3.1 Create routes/api.php Manually
 Navigate to your project’s routes/ folder. Create a new file named api.php. Paste this boilerplate code:
@@ -132,6 +170,40 @@ Route::post('/auth/google', [GoogleAuthController::class, 'handleGoogleAuth']);
 -------------------Step 4: Test Your API
 1. Start the Laravel server:
 php artisan serve
+
+******
+There will be a fatal error: 
+FatalError
+Trait "App\Models\HasApiTokens" not found
+The error occurs because you're trying to use Laravel Sanctum's HasApiTokens trait but either:
+
+Sanctum isn't properly installed, or
+The trait isn't being imported correctly
+
+Here's how to fix it:
+1. First, verify Sanctum is installed
+Run this command:
+
+bash
+composer require laravel/sanctum
+2. Then, update your User model correctly (app/Models/User.php):
+php
+<?php
+namespace App\Models;
+
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Laravel\Sanctum\HasApiTokens;  // ← Correct import path
+
+class User extends Authenticatable
+{
+    use HasApiTokens;  // ← This is the correct usage
+    
+    // ... rest of your model code
+}
+********
+
+do this and proceed with the next^^
+
 2. Test with Postman/Insomnia:
 Method: POST
 URL: http://localhost:8000/api/auth/google
@@ -384,7 +456,7 @@ php
 Create ForceHttps middleware:
 
 bash:
-php artisan make:middleware ForceHttps
+    php artisan make:middleware ForceHttps
 
 Then edit it:
 
@@ -414,3 +486,4 @@ CORS:
 Call API from a frontend → No CORS errors.
 Input Sanitization:
 Send invalid token → Returns 422 validation error.
+------------------------------STEP 6 
