@@ -486,4 +486,93 @@ CORS:
 Call API from a frontend → No CORS errors.
 Input Sanitization:
 Send invalid token → Returns 422 validation error.
+
 ------------------------------STEP 6 
+We need tests to verify:
+
+Token validation
+New/existing user flows
+Error handling
+
+1. Install Testing Packages
+bash
+composer require --dev phpunit/phpunit pestphp/pest
+
+2. Create Tests
+Generate a test file:
+
+bash
+php artisan make:test Auth/GoogleAuthTest
+
+3. Write Tests
+Edit tests/Feature/Auth/GoogleAuthTest.php:
+
+php
+<?php
+
+namespace Tests\Feature\Auth;
+
+use App\Models\User;
+use Tests\TestCase;
+use Illuminate\Support\Str;
+
+class GoogleAuthTest extends TestCase
+{
+    /** Test new user registration via Google */
+    public function test_new_user_google_auth()
+    {
+        $mockToken = $this->createMockGoogleToken(email: 'newuser@example.com');
+
+        $response = $this->postJson('/api/auth/google', [
+            'google_id_token' => $mockToken,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'status' => 'new_user',
+                'message' => 'Google verified. Complete registration.',
+            ])
+            ->assertJsonStructure(['access_token', 'refresh_token']);
+    }
+
+    /** Test existing user login */
+    public function test_existing_user_google_auth()
+    {
+        $email = 'existing@example.com';
+        User::factory()->create(['email' => $email]);
+        $mockToken = $this->createMockGoogleToken(email: $email);
+
+        $response = $this->postJson('/api/auth/google', [
+            'google_id_token' => $mockToken,
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'status' => 'existing_user',
+                'message' => 'Login successful',
+            ]);
+    }
+
+    /** Test invalid token */
+    public function test_invalid_token_rejection()
+    {
+        $response = $this->postJson('/api/auth/google', [
+            'google_id_token' => 'invalid_token',
+        ]);
+
+        $response->assertStatus(422);
+    }
+
+    /** Helper to mock Google tokens (override in actual tests) */
+    private function createMockGoogleToken(string $email): string
+    {
+        return Str::random(100); // Replace with actual mock logic
+    }
+}
+
+4. Run Tests
+bash
+php artisan test
+
+---------------------------STEP 7
+
